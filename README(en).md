@@ -30,4 +30,4 @@ Run the following commands in your Command Prompt (first time only):
 ```bash
 pip install playwright numpy pillow
 playwright install chromium
-'''
+```
