@@ -1,1 +1,0 @@
-# WuWa-Spine-Batch-Exporter
