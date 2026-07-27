@@ -1,28 +1,3 @@
-"""
-鳴潮 Spine → 動画 一括書き出しスクリプト(ブラウザ手動操作なし)
-
-1. Character フォルダ以下のFModel書き出しjson(SpineAtlasAsset)から.skel/.atlasを復元し、
-   対応するpngテクスチャとあわせて 鳴潮ライブ2D フォルダ内のキャラごとのフォルダにまとめる。
-2. 各キャラの全アニメーションをヘッドレスChromium(spine-webgl)で1フレームずつ
-   決定論的にレンダリングし、ffmpegで通常再生用の<アニメ名>.mp4(不透明)と
-   背景透過用の<アニメ名>_alpha.mov(PNGコーデック+アルファ)を書き出す。連番pngや抽出した
-   .skel/.atlas/テクスチャpngなど、変換に使った中間ファイルは成功後にすべて削除する
-   (失敗したアニメーションの連番pngだけはフォールバックとして残る)。
-   ブラウザは内部で自動操作するだけで、ユーザーが画面を開く必要はない。
-
-設定(読み込み元/保存先のパス)は、このスクリプトと同じフォルダに作られる
-wuwa_config.json に保存される。初回実行時に無ければ自動生成され、保存先フォルダも
-無ければ自動作成される。パスを変えたい場合はこのjsonを編集すればよい。
-
-事前準備 (初回のみ、コマンドプロンプトで実行):
-    pip install playwright numpy pillow
-    playwright install chromium
-    ffmpegをインストールしてPATHに通す(必須。無いと連番pngのまま残る)
-    (背景透過movはffmpeg標準のPNGコーデックを使うので追加の対応は不要)
-
-使い方:
-    python 鳴潮_2D.py
-"""
 import base64
 import http.server
 import io
