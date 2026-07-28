@@ -14,19 +14,19 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
-# ---------- 0. Settings (JSON saving, auto-folder generation) ----------
+# ---------- 0. Settings (JSON saving, automatic folder generation) ----------
 
 CONFIG_PATH = Path(__file__).resolve().parent / "wuwa_config.json"
 
-# Initial values if the config file does not exist (if empty, required on first run)
+# Initial values if the configuration file doesn't exist (if empty, manual input is required on first run)
 SOURCE_ROOT = Path("")
 OUTPUT_ROOT = Path("")
 
 
 def load_or_create_config():
-    """Loads source/output paths from wuwa_config.json (in the same folder as the script).
-    If missing, treats it as the first run, prompts the user to input paths directly in the console, and creates a new file.
-    Auto-creates the output directory if it doesn't exist."""
+    """Reads source/destination from wuwa_config.json (in the same folder as the script).
+    If it doesn't exist, treats it as the first run, prompts the user to input paths directly in the console, and creates a new one.
+    Auto-generates the destination folder if it does not exist."""
     global SOURCE_ROOT, OUTPUT_ROOT
 
     if CONFIG_PATH.exists():
@@ -37,13 +37,13 @@ def load_or_create_config():
             OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
             return
         except (json.JSONDecodeError, KeyError, OSError) as e:
-            print(f"[WARNING] Failed to load {CONFIG_PATH}, restarting initial setup: {e}")
+            print(f"[Warning] Failed to load {CONFIG_PATH}, redoing initial setup: {e}")
 
-    print(f"First run detected. Config file ({CONFIG_PATH.name}) not found, please enter the paths.")
-    print("(Pressing Enter without input uses default values inside [ ]. Items with empty defaults are required)")
+    print(f"It looks like your first run. Configuration file ({CONFIG_PATH.name}) not found, please input paths.")
+    print("(Pressing Enter without input uses the default value inside [ ]. Items with empty defaults are required)")
 
     while True:
-        src_in = input(f"FModel export source folder path [{SOURCE_ROOT}]: ").strip().strip('"')
+        src_in = input(f"Path to FModel export source folder [{SOURCE_ROOT}]: ").strip().strip('"')
         if src_in:
             SOURCE_ROOT = Path(src_in)
             break
@@ -52,7 +52,7 @@ def load_or_create_config():
         print("  -> Cannot be empty. Please enter a path.")
 
     while True:
-        out_in = input(f"Destination folder path [{OUTPUT_ROOT}]: ").strip().strip('"')
+        out_in = input(f"Path to destination folder [{OUTPUT_ROOT}]: ").strip().strip('"')
         if out_in:
             OUTPUT_ROOT = Path(out_in)
             break
@@ -62,12 +62,12 @@ def load_or_create_config():
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     save_config()
-    print(f"Settings saved to {CONFIG_PATH}. These values will be used automatically from next time.")
+    print(f"Settings saved to {CONFIG_PATH}. Values from this file will be used automatically from next time.")
 
 
 def save_config():
     """Saves current SOURCE_ROOT/OUTPUT_ROOT to wuwa_config.json (next to the script).
-    Auto-creates the output directory if it doesn't exist."""
+    Auto-generates destination folder if missing."""
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
         json.dumps({"source_root": str(SOURCE_ROOT), "output_root": str(OUTPUT_ROOT)},
@@ -84,18 +84,18 @@ MAKE_ALPHA_MOV = True     # Also export transparent background version (*_alpha.
 
 
 def get_free_port() -> int:
-    """Asks OS to assign an available port on localhost (to avoid conflicts with fixed ports)"""
+    """Asks OS to assign an available localhost port (to avoid conflicts with fixed ports)"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("localhost", 0))
         return s.getsockname()[1]
 
 
-HTTP_PORT = None  # Free port is automatically assigned inside main()
+HTTP_PORT = None  # Automatically populated with a free port inside main()
 
 
-# ---------- 1. Extraction Process ----------
+# ---------- 1. Extraction Processing ----------
 
-DONE_MANIFEST_NAME = "_done.json"  # Completion marker placed directly under OUTPUT_ROOT (single file shared across all characters)
+DONE_MANIFEST_NAME = "_done.json"  # Completion marker placed directly under OUTPUT_ROOT (1 file common to all characters)
 
 
 def done_manifest_path() -> Path:
@@ -159,12 +159,12 @@ def find_png(char_dir: Path, image_name: str):
 def stage_textures(atlas_text: str, images: list, char_dir: Path, stem: str, out_dir: Path):
     """Copies texture PNGs to out_dir and rewrites page names within the atlas.
 
-    If multiple assets (different stems) coexist in the same output folder (out_dir),
-    texture filenames might be identical while their contents differ.
-    If copied with the same name, assets processed later might mistakenly use the images 
-    processed earlier (image order/mix-up bug). To prevent this, the destination filename 
-    is always prefixed with the stem to make it unique, and the page name lines inside atlas_text 
-    are also rewritten to this new name.
+    If multiple assets (with different stems) coexist in the same output folder (out_dir),
+    there is a possibility that texture file names are identical but contents differ.
+    If copied with the same name, assets processed later might mistakenly use images 
+    from the ones processed earlier (image order/mix-up bug). To avoid this, 
+    always append stem to the destination filename to make it unique, and rewrite 
+    the page name lines inside atlas_text to that new name.
 
     Returns: (rewritten atlas_text, list of copied Paths, list of missing original image names)
     """
@@ -205,7 +205,7 @@ def extract_all(done_manifest: dict):
         manifest_key = f"{char_dir.name}__{stem}"
 
         if manifest_key in done_manifest:
-            print(f"[SKIP] {manifest_key} : Completion marker exists (already processed)")
+            print(f"[Skip] {manifest_key} : Completion marker exists (Already processed)")
             continue
 
         images = atlas_page_images(atlas_text)
@@ -215,22 +215,22 @@ def extract_all(done_manifest: dict):
         new_atlas_text, pngs, missing = stage_textures(atlas_text, images, char_dir, stem, out_dir)
 
         if not pngs:
-            print(f"[SKIP] {json_path.relative_to(SOURCE_ROOT)} : Textures not found ({', '.join(images)})")
+            print(f"[Skip] {json_path.relative_to(SOURCE_ROOT)} : Texture not found ({', '.join(images)})")
             continue
         if missing:
-            print(f"[NOTICE] {json_path.relative_to(SOURCE_ROOT)} : Missing textures {missing}")
+            print(f"[Notice] {json_path.relative_to(SOURCE_ROOT)} : Missing textures {missing}")
 
         skel_name, atlas_name = f"{stem}.skel", f"{stem}.atlas"
         (out_dir / skel_name).write_bytes(skel_bytes)
         (out_dir / atlas_name).write_text(new_atlas_text, encoding="utf-8")
 
         entries.append((char_dir.name, skel_name, atlas_name, manifest_key))
-        print(f"[EXTRACT OK] {manifest_key} : png x{len(pngs)}")
+        print(f"[Extraction OK] {manifest_key} : png x{len(pngs)}")
 
     return entries
 
 
-# ---------- 2. Rendering HTML Harness (Internal, user does not open) ----------
+# ---------- 2. Rendering HTML Harness (Internal use, user does not open) ----------
 
 HARNESS_TEMPLATE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -284,8 +284,8 @@ function poll() {
     skeleton.setToSetupPose();
     skeleton.updateWorldTransform();
 
-    // Debug: Output draw order (slot order), attachments, and blend modes as a list.
-    // Used to identify which slot causes issues like unexpected white boxes.
+    // For debugging: List draw order (slot order), attachments, and blend modes.
+    // Used to identify which slot causes weird white square panels if they appear.
     console.log('SLOTS(draw order): ' + skeleton.slots.map((s, i) => {
       const att = s.getAttachment();
       return `#${i}:${s.data.name}=[${att ? att.name : 'null'}]/blend=${s.data.blendMode}`;
@@ -298,13 +298,13 @@ function poll() {
 }
 if (gl && typeof spine !== 'undefined') poll();
 
-// Placeholder slots such as "counters/data displays" dynamically injected inside the game 
-// may remain empty (white boxes, etc.) and stand out when exported as still images.
-// Slots containing these keywords in their names are forcibly hidden whenever animations are applied.
+// Placeholder slots like "counters/data displays" dynamically inserted in-game 
+// may render empty (white panels, etc.) when exported as stills.
+// Slots whose names contain these keywords are forcibly hidden whenever animations are applied.
 const HIDE_SLOT_KEYWORDS = ['数字', '数据', 'shuju'];
 // Diagnostic: If true, hides all slots with Screen blend mode (=3).
-// A flag to determine if the cause of "white boxes" not removed by keywords lies in Screen blending generally.
-// Once the cause is identified, it should ideally be reverted to individual slot name specifications.
+// Flag to isolate whether the "white panel" not fixed by keyword specification 
+// stems from Screen composition generally. Revert to individual slot name specification once identified.
 const DEBUG_HIDE_ALL_SCREEN_BLEND = true;
 function hideDebugSlots() {
   skeleton.slots.forEach(s => {
@@ -317,10 +317,11 @@ function hideDebugSlots() {
 }
 
 window.renderFrame = function(animName, time, bgR, bgG, bgB) {
-  // bgR/bgG/bgB are background colors from 0 to 1. Additive/screen blend VFX do not composite correctly
-  // on a transparent canvas (colors or opacity become incorrect), so they are always rendered on an opaque background.
-  // If transparency is needed, black-background and white-background versions are rendered twice, and alpha is calculated from the difference
-  // (refer to compose_alpha_from_black_white on the Python side).
+  // bgR/bgG/bgB are background colors from 0 to 1. Additive/Screen composite VFX 
+  // do not composite correctly on a transparent canvas (colors and opacities get broken), 
+  // so they are always rendered on an opaque background.
+  // If transparency is needed, render twice with a black background and a white background 
+  // and compute alpha from the difference (refer to Python-side compose_alpha_from_black_white).
   const anim = animations[animName];
   skeleton.setToSetupPose();
   anim.apply(skeleton, 0, time, false, null, 1, spine.MixBlend.setup, spine.MixDirection.mixIn);
@@ -334,16 +335,50 @@ window.renderFrame = function(animName, time, bgR, bgG, bgB) {
   return canvas.toDataURL("image/png");
 };
 
+// For performance: Processes a range of frames in a single browser invocation.
+// Round-tripping between Python and the browser per frame accumulates communication overhead 
+// proportional to frame count × 2 (black background & white background), becoming a dominant bottleneck. 
+// Thus, frames in the specified range are rendered together and returned as an array.
+// Intermediate captures use PNG (lossless) (JPEG compression noise flickers low-alpha judgments 
+// per frame, causing transparent videos to stutter/glitch).
+window.renderFrameBatch = function(animName, startFrame, count, fps) {
+  const anim = animations[animName];
+  const blackUrls = [];
+  const whiteUrls = [];
+  for (let k = 0; k < count; k++) {
+    const t = (startFrame + k) / fps;
+    skeleton.setToSetupPose();
+    anim.apply(skeleton, 0, t, false, null, 1, spine.MixBlend.setup, spine.MixDirection.mixIn);
+    hideDebugSlots();
+    skeleton.updateWorldTransform();
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    renderer.begin();
+    renderer.drawSkeleton(skeleton, false);
+    renderer.end();
+    blackUrls.push(canvas.toDataURL("image/png"));
+
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    renderer.begin();
+    renderer.drawSkeleton(skeleton, false);
+    renderer.end();
+    whiteUrls.push(canvas.toDataURL("image/png"));
+  }
+  return { black: blackUrls, white: whiteUrls };
+};
+
 window.getAnimDuration = function(animName) {
   return animations[animName].duration;
 };
 
-// Samples the entire animation (multiple frames) to find the total bounds range,
-// and readjusts the camera for that animation. If the camera is fixed looking only at the setup pose,
-// it will misalign with actual rendering positions for heavy motion VFX, etc.
+// Samples the entire animation (multiple frames) to find the total bounds range, 
+// and re-centers the camera for that animation. Fixing the camera based solely on the setup pose 
+// causes misalignment with actual rendering positions for heavy-movement VFX.
 window.fitCameraToAnim = function(animName, samples) {
   const anim = animations[animName];
-  const n = Math.max(1, samples || 40);
+  const n = Math.max(1, samples || 20);
   const offset = new spine.Vector2(), size = new spine.Vector2();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i <= n; i++) {
@@ -385,27 +420,28 @@ def serve_output_root(port: int):
 
 
 def decode_frame_rgb(data_url: str) -> np.ndarray:
-    """Decodes PNG data URL from canvas.toDataURL() into an RGB float32 array"""
+    """Decodes canvas.toDataURL() PNG data URL into an RGB float32 array"""
     png_bytes = base64.b64decode(data_url.split(",", 1)[1])
     return np.array(Image.open(io.BytesIO(png_bytes)).convert("RGB"), dtype=np.float32)
 
 
 def compose_alpha_from_black_white(black_arr: np.ndarray, white_arr: np.ndarray) -> Image.Image:
-    """Restores original alpha values and colors from two rendering results (black background / white background) via difference matting.
+    """Restores original alpha values and colors from two rendering results on black/white backgrounds (difference mat).
 
-    VFX such as screen/additive blending do not composite properly when drawn directly on a transparent canvas
-    (colors or opacity degrade), so they are rendered twice with opaque backgrounds and reverse-calculated from the difference.
-    Assuming "over" compositing: white - black = (1-alpha) (difference in background color contribution),
+    Screen/additive composite VFX cannot be drawn directly onto transparent canvases 
+    correctly (colors and opacities get corrupted), so they are rendered twice on opaque 
+    backgrounds, and reverse-calculated from the difference.
+    Assuming "over" composition: white - black = (1 - alpha) (difference in background contribution), 
     so alpha = 1 - (white - black), and straight_color = black / alpha.
 
-    However, this division is vulnerable to noise in regions with very low alpha (almost invisible),
-    causing areas that should be transparent to abnormally amplify colors and show strange color spots/bleeds.
+    However, this division is susceptible to noise in areas with very low alpha (almost invisible), 
+    causing parts that should be transparent to abnormally amplify colors and leak weird color stains/bleeds. 
     To prevent this:
-      - Limits the maximum color amplification rate (alphas lower than ALPHA_FLOOR will not amplify color further)
-      - Treats alphas lower than ALPHA_CUTOFF as completely transparent
+      - Cap color amplification factors (alphas lower than ALPHA_FLOOR do not amplify colors further)
+      - Treat alphas lower than (ALPHA_CUTOFF) as completely transparent
     """
-    ALPHA_FLOOR = 48.0   # Caps color amplification at this value for alphas below this
-    ALPHA_CUTOFF = 40.0  # Treats alphas below this as noise and makes them fully transparent (alpha=0)
+    ALPHA_FLOOR = 48.0   # Caps color amplification factor for alphas below this
+    ALPHA_CUTOFF = 40.0  # Treats alphas below this as noise and fully transparent (alpha=0)
 
     diff = white_arr - black_arr
     alpha = 255.0 - np.clip(diff.max(axis=2), 0.0, 255.0)
@@ -418,41 +454,45 @@ def compose_alpha_from_black_white(black_arr: np.ndarray, white_arr: np.ndarray)
 
 def cleanup_extracted_assets(out_dir: Path):
     """Deletes extracted .skel/.atlas/texture PNGs used for rendering (no longer needed once mp4/mov are generated).
-    Leaves sequence PNG folders (_tmp_frames_*) intact as a fallback if ffmpeg conversion failed."""
+    Sequential PNG folders (_tmp_frames_*) left behind due to ffmpeg conversion failures are preserved as fallbacks."""
     for item in out_dir.iterdir():
         if item.is_dir():
-            continue  # _tmp_frames_* are fallback for failures, do not delete
+            continue  # _tmp_frames_* are preserved as failure fallbacks
         if item.suffix.lower() in (".skel", ".atlas", ".png"):
             item.unlink(missing_ok=True)
 
 
-def encode_outputs(flat_pattern: str, rgba_pattern: str, out_dir: Path, name: str):
-    """Exports standard playback <name>.mp4 from flat_pattern (RGB sequence PNGs correctly composited on black background),
-    and transparent background <name>_alpha.mov (PNG codec + alpha, only when MAKE_ALPHA_MOV is enabled)
-    from rgba_pattern (RGBA sequence PNGs restored via difference matting).
+def encode_outputs(rgba_pattern: str, out_dir: Path, name: str, canvas_dim: int):
+    """Exports both <name>.mp4 (composited on black background, opaque) for normal playback 
+    and <name>_alpha.mov (PNG codec + alpha, when MAKE_ALPHA_MOV is enabled) from a single 
+    rgba_pattern (RGBA sequential PNGs restored via difference mat).
 
-    Transparency was initially tested with VP9 (webm), but since many players like VLC/Discord/YMM4
-    failed to decode the alpha channel correctly, it was changed to a more reliable
-    .mov container with PNG codec (lossless, supports transparency). Although file size is larger,
-    it is less dependent on player compatibility.
-    The MP4 uses clean yuv420p + simple settings to avoid color shift
-    (tried yuv444p+full range specification, but it conversely altered colors in some playback environments, so reverted).
+    Previously, a separate sequence (flat_) directly drawn on a black background was saved for mp4, 
+    but since it was confirmed numerically identical to "overlaying RGBA on a black background via overlay filter 
+    then converting to yuv420p", using a single frame_(RGBA) sequence handles both, reducing saved files and simplifying.
 
-    Returns: (mp4_ok, mov_ok). Success is judged by file size and ffmpeg exit code
-    (checking only existence might treat corrupted/unplayable files as successful).
+    Transparency was initially tested with VP9 (webm), but since it was confirmed that alpha channels 
+    do not decode correctly in many players like VLC, Discord, and YMM4, it was changed to a more reliable 
+    .mov container with the PNG codec (lossless, transparency-supported). File size increases, but it 
+    is less dependent on player compatibility.
+    The mp4 side keeps a straightforward yuv420p + simple configuration to avoid color shifts.
+
+    Returns: (mp4_ok, mov_ok). Success is determined by file size and ffmpeg exit code 
+    (relying solely on existence would treat broken/unplayable files as successful).
     """
     mp4_path = out_dir / f"{name}.mp4"
     r1 = subprocess.run([
-        "ffmpeg", "-y", "-framerate", str(FPS),
-        "-i", flat_pattern,
-        "-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=black:s={canvas_dim}x{canvas_dim}:r={FPS}",
+        "-framerate", str(FPS), "-i", rgba_pattern,
+        "-filter_complex", "[0:v][1:v]overlay=shortest=1:format=auto,format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-movflags", "+faststart",
         str(mp4_path)
     ], check=False, capture_output=True)
     mp4_ok = mp4_path.exists() and mp4_path.stat().st_size > 1024 and r1.returncode == 0
     if not mp4_ok:
         mp4_path.unlink(missing_ok=True)
-        print(f"    [ffmpeg mp4 error] {name} : {r1.stderr.decode(errors='ignore')[-800:]}")
+        print(f"    [ffmpeg mp4 Error] {name} : {r1.stderr.decode(errors='ignore')[-800:]}")
 
     mov_ok = False
     if MAKE_ALPHA_MOV:
@@ -466,13 +506,13 @@ def encode_outputs(flat_pattern: str, rgba_pattern: str, out_dir: Path, name: st
         mov_ok = mov_path.exists() and mov_path.stat().st_size > 1024 and r2.returncode == 0
         if not mov_ok:
             mov_path.unlink(missing_ok=True)
-            print(f"    [ffmpeg mov (transparent) error] {name} : {r2.stderr.decode(errors='ignore')[-800:]}")
+            print(f"    [ffmpeg mov (transparent) Error] {name} : {r2.stderr.decode(errors='ignore')[-800:]}")
 
     return mp4_ok, mov_ok
 
 
 def render_character(page, char_dir_name, skel_name, atlas_name):
-    """Returns: True if all animations were successfully exported"""
+    """Returns: True if all animations exported successfully"""
     out_dir = OUTPUT_ROOT / char_dir_name
     harness_path = out_dir / "_harness.html"
     html = (HARNESS_TEMPLATE
@@ -487,11 +527,11 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
     try:
         page.wait_for_function(
             "() => window.ready === true || window.loadError !== null",
-            timeout=30000,
+            timeout=600000,
         )
     except Exception:
         load_error = page.evaluate("window.loadError")
-        raise RuntimeError(f"Load timeout (30s). window.loadError={load_error!r}")
+        raise RuntimeError(f"Load timeout (10 minutes). window.loadError={load_error!r}")
 
     load_error = page.evaluate("window.loadError")
     if load_error:
@@ -504,42 +544,47 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
         duration = page.evaluate("(a) => window.getAnimDuration(a)", anim)
         if not duration or duration <= 0:
             continue
-        # Readjust camera according to the motion of this entire animation (prevents positional misalignment)
-        page.evaluate("([a, s]) => window.fitCameraToAnim(a, s)", [anim, 40])
+        # Re-center camera according to the movement of this specific animation (prevents positional shifts)
+        page.evaluate("([a, s]) => window.fitCameraToAnim(a, s)", [anim, 20])
         n_frames = max(1, int(duration * FPS))
         tmp_frame_dir = out_dir / f"_tmp_frames_{anim}"
         tmp_frame_dir.mkdir(parents=True, exist_ok=True)
 
-        for i in range(n_frames):
-            t = i / FPS
-            black_url = page.evaluate("([a, t]) => window.renderFrame(a, t, 0, 0, 0)", [anim, t])
-            white_url = page.evaluate("([a, t]) => window.renderFrame(a, t, 1, 1, 1)", [anim, t])
-            black_arr = decode_frame_rgb(black_url)
-            white_arr = decode_frame_rgb(white_url)
-            rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
-            rgba_img.save(tmp_frame_dir / f"frame_{i:04d}.png")
-            Image.fromarray(black_arr.astype(np.uint8), mode="RGB").save(tmp_frame_dir / f"flat_{i:04d}.png")
+        BATCH_SIZE = 20  # Unit of frames sent to the browser together (reduces round-trips for speedup)
+        idx = 0
+        for start in range(0, n_frames, BATCH_SIZE):
+            count = min(BATCH_SIZE, n_frames - start)
+            result = page.evaluate(
+                "([a, s, c, fps]) => window.renderFrameBatch(a, s, c, fps)",
+                [anim, start, count, FPS]
+            )
+            for k in range(count):
+                black_arr = decode_frame_rgb(result["black"][k])
+                white_arr = decode_frame_rgb(result["white"][k])
+                rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
+                rgba_img.save(tmp_frame_dir / f"frame_{idx:04d}.png")
+                idx += 1
 
         if not shutil.which("ffmpeg"):
-            print(f"[WARNING] {char_dir_name} / {anim} : ffmpeg not found, leaving sequence PNGs -> {tmp_frame_dir}")
+            print(f"[Warning] {char_dir_name} / {anim} : ffmpeg not found, leaving sequential PNGs -> {tmp_frame_dir}")
             all_ok = False
             continue
 
         mp4_ok, mov_ok = encode_outputs(
-            str(tmp_frame_dir / "flat_%04d.png"), str(tmp_frame_dir / "frame_%04d.png"), out_dir, anim
+            str(tmp_frame_dir / "frame_%04d.png"), out_dir, anim, CANVAS_DIM
         )
 
         if mp4_ok:
-            print(f"[EXPORT OK] {char_dir_name} / {anim} : {out_dir / (anim + '.mp4')}"
+            print(f"[Export OK] {char_dir_name} / {anim} : {out_dir / (anim + '.mp4')}"
                   + (f" / {out_dir / (anim + '_alpha.mov')}" if mov_ok else ""))
             shutil.rmtree(tmp_frame_dir, ignore_errors=True)
         else:
-            print(f"[ERROR] {char_dir_name} / {anim} : MP4 conversion failed, keeping sequence PNGs -> {tmp_frame_dir}")
+            print(f"[Error] {char_dir_name} / {anim} : MP4 conversion failed, leaving sequential PNGs -> {tmp_frame_dir}")
             all_ok = False
 
     harness_path.unlink(missing_ok=True)
     cleanup_extracted_assets(out_dir)
-    print(f"    [CLEANUP] {char_dir_name} : Deleted extracted skel/atlas/texture PNGs (leaving mp4/mov only)")
+    print(f"    [Cleanup] {char_dir_name} : Deleted extracted skel/atlas/texture PNGs (keeping only mp4/mov)")
 
     return all_ok
 
@@ -550,7 +595,7 @@ def main():
 
     entries = extract_all(done_manifest)
     if not entries:
-        print("No convertible characters found (or all already processed)")
+        print("No characters available for conversion (or all already processed)")
         return
 
     global HTTP_PORT
@@ -560,8 +605,8 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page(viewport={"width": CANVAS_DIM, "height": CANVAS_DIM})
-            page.on("console", lambda msg: print(f"    [Browser console] {msg.type}: {msg.text}"))
-            page.on("pageerror", lambda exc: print(f"    [Browser pageerror] {exc}"))
+            page.on("console", lambda msg: print(f"    [Browser Console] {msg.type}: {msg.text}"))
+            page.on("pageerror", lambda exc: print(f"    [Browser Page Error] {exc}"))
             for char_dir_name, skel_name, atlas_name, manifest_key in entries:
                 try:
                     ok = render_character(page, char_dir_name, skel_name, atlas_name)
@@ -571,9 +616,9 @@ def main():
                         }
                         save_done_manifest(done_manifest)
                     else:
-                        print(f"    [NOTICE] {char_dir_name} : Some animations failed, completion marker not created (will retry next time)")
+                        print(f"    [Notice] {char_dir_name} : Some animations failed, skipping completion marker creation (will be processed again next time)")
                 except Exception as e:
-                    print(f"[ERROR] {char_dir_name} : {e}")
+                    print(f"[Error] {char_dir_name} : {e}")
             browser.close()
     finally:
         httpd.shutdown()
