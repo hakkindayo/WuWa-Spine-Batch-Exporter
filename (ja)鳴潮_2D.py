@@ -334,6 +334,40 @@ window.renderFrame = function(animName, time, bgR, bgG, bgB) {
   return canvas.toDataURL("image/png");
 };
 
+// 高速化用: フレーム範囲をまとめて1回のブラウザ呼び出しで処理する。
+// フレームごとにPython<->ブラウザを往復すると、その通信オーバーヘッドが
+// フレーム数×2(黒背景・白背景)だけ積み重なって支配的なボトルネックになるため、
+// 指定範囲のフレームをまとめて描画し、配列でまとめて返す。
+// 中間キャプチャはPNG(可逆)にしている(JPEGだと圧縮ノイズでフレームごとに
+// 低アルファ判定がちらつき、透過動画が点滅する不具合があったため)。
+window.renderFrameBatch = function(animName, startFrame, count, fps) {
+  const anim = animations[animName];
+  const blackUrls = [];
+  const whiteUrls = [];
+  for (let k = 0; k < count; k++) {
+    const t = (startFrame + k) / fps;
+    skeleton.setToSetupPose();
+    anim.apply(skeleton, 0, t, false, null, 1, spine.MixBlend.setup, spine.MixDirection.mixIn);
+    hideDebugSlots();
+    skeleton.updateWorldTransform();
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    renderer.begin();
+    renderer.drawSkeleton(skeleton, false);
+    renderer.end();
+    blackUrls.push(canvas.toDataURL("image/png"));
+
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    renderer.begin();
+    renderer.drawSkeleton(skeleton, false);
+    renderer.end();
+    whiteUrls.push(canvas.toDataURL("image/png"));
+  }
+  return { black: blackUrls, white: whiteUrls };
+};
+
 window.getAnimDuration = function(animName) {
   return animations[animName].duration;
 };
@@ -343,7 +377,7 @@ window.getAnimDuration = function(animName) {
 // カメラを固定すると、動きの大きいVFXなどでは実際の描画位置とズレてしまうため。
 window.fitCameraToAnim = function(animName, samples) {
   const anim = animations[animName];
-  const n = Math.max(1, samples || 40);
+  const n = Math.max(1, samples || 20);
   const offset = new spine.Vector2(), size = new spine.Vector2();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i <= n; i++) {
@@ -426,10 +460,15 @@ def cleanup_extracted_assets(out_dir: Path):
             item.unlink(missing_ok=True)
 
 
-def encode_outputs(flat_pattern: str, rgba_pattern: str, out_dir: Path, name: str):
-    """flat_pattern(黒背景に正しく合成済みのRGB連番png)から通常再生用の<name>.mp4を、
-    rgba_pattern(差分マットで復元したRGBA連番png)から背景透過用の<name>_alpha.mov
-    (PNGコーデック+アルファ, MAKE_ALPHA_MOV有効時のみ)を書き出す。
+def encode_outputs(rgba_pattern: str, out_dir: Path, name: str, canvas_dim: int):
+    """rgba_pattern(差分マットで復元したRGBA連番png)1種類だけから、
+    通常再生用の<name>.mp4(黒背景に合成、不透明)と、背景透過用の<name>_alpha.mov
+    (PNGコーデック+アルファ, MAKE_ALPHA_MOV有効時のみ)の両方を書き出す。
+
+    以前はmp4用に黒背景直描画の別連番(flat_)を保存していたが、
+    「RGBAを黒背景の上にoverlayフィルタで合成してからyuv420pにする」のと
+    数値的に完全に同じ結果になることを確認できたため、frame_(RGBA)1種類だけで
+    両方を賄うようにした(保存するファイルが減り、シンプルになる)。
 
     透過は当初VP9(webm)で試したが、VLC/Discord/YMM4など多くのプレイヤーで
     アルファチャンネルが正しくデコードされないことが確認されたため、より確実な
@@ -443,9 +482,10 @@ def encode_outputs(flat_pattern: str, rgba_pattern: str, out_dir: Path, name: st
     """
     mp4_path = out_dir / f"{name}.mp4"
     r1 = subprocess.run([
-        "ffmpeg", "-y", "-framerate", str(FPS),
-        "-i", flat_pattern,
-        "-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=black:s={canvas_dim}x{canvas_dim}:r={FPS}",
+        "-framerate", str(FPS), "-i", rgba_pattern,
+        "-filter_complex", "[0:v][1:v]overlay=shortest=1:format=auto,format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-movflags", "+faststart",
         str(mp4_path)
     ], check=False, capture_output=True)
@@ -487,11 +527,11 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
     try:
         page.wait_for_function(
             "() => window.ready === true || window.loadError !== null",
-            timeout=30000,
+            timeout=600000,
         )
     except Exception:
         load_error = page.evaluate("window.loadError")
-        raise RuntimeError(f"読み込みタイムアウト(30秒)。window.loadError={load_error!r}")
+        raise RuntimeError(f"読み込みタイムアウト(10分)。window.loadError={load_error!r}")
 
     load_error = page.evaluate("window.loadError")
     if load_error:
@@ -505,20 +545,25 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
         if not duration or duration <= 0:
             continue
         # このアニメーション全体の動きに合わせてカメラを合わせ直す(位置ズレ対策)
-        page.evaluate("([a, s]) => window.fitCameraToAnim(a, s)", [anim, 40])
+        page.evaluate("([a, s]) => window.fitCameraToAnim(a, s)", [anim, 20])
         n_frames = max(1, int(duration * FPS))
         tmp_frame_dir = out_dir / f"_tmp_frames_{anim}"
         tmp_frame_dir.mkdir(parents=True, exist_ok=True)
 
-        for i in range(n_frames):
-            t = i / FPS
-            black_url = page.evaluate("([a, t]) => window.renderFrame(a, t, 0, 0, 0)", [anim, t])
-            white_url = page.evaluate("([a, t]) => window.renderFrame(a, t, 1, 1, 1)", [anim, t])
-            black_arr = decode_frame_rgb(black_url)
-            white_arr = decode_frame_rgb(white_url)
-            rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
-            rgba_img.save(tmp_frame_dir / f"frame_{i:04d}.png")
-            Image.fromarray(black_arr.astype(np.uint8), mode="RGB").save(tmp_frame_dir / f"flat_{i:04d}.png")
+        BATCH_SIZE = 20  # フレームをまとめてブラウザに送る単位(往復回数を減らして高速化)
+        idx = 0
+        for start in range(0, n_frames, BATCH_SIZE):
+            count = min(BATCH_SIZE, n_frames - start)
+            result = page.evaluate(
+                "([a, s, c, fps]) => window.renderFrameBatch(a, s, c, fps)",
+                [anim, start, count, FPS]
+            )
+            for k in range(count):
+                black_arr = decode_frame_rgb(result["black"][k])
+                white_arr = decode_frame_rgb(result["white"][k])
+                rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
+                rgba_img.save(tmp_frame_dir / f"frame_{idx:04d}.png")
+                idx += 1
 
         if not shutil.which("ffmpeg"):
             print(f"[警告] {char_dir_name} / {anim} : ffmpegが見つからないので連番pngのまま残す -> {tmp_frame_dir}")
@@ -526,7 +571,7 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
             continue
 
         mp4_ok, mov_ok = encode_outputs(
-            str(tmp_frame_dir / "flat_%04d.png"), str(tmp_frame_dir / "frame_%04d.png"), out_dir, anim
+            str(tmp_frame_dir / "frame_%04d.png"), out_dir, anim, CANVAS_DIM
         )
 
         if mp4_ok:
