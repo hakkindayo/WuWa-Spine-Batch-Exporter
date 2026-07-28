@@ -1,4 +1,4 @@
-# WuWa Spine Batch Exporter
+# WuWa-2D-Animation-Spine-Viewer
 
 FModelでエクスポートされたJSONファイル（SpineAtlasAsset）から、鳴潮（Wuthering Waves）のアセット向けにSpineアニメーション（PNG連番・動画）を自動で抽出し、復元・一括書き出しするPythonスクリプトです。
 
