@@ -1,4 +1,4 @@
-# WuWa Spine Batch Exporter
+# WuWa-2D-Animation-Spine-Viewer
 
 A Python script that automatically extracts, reconstructs, and batch-exports Spine animations (PNG sequences and videos) from FModel-exported JSON files (SpineAtlasAsset), tailored for Wuthering Waves assets.
 
