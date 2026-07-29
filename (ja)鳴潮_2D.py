@@ -81,6 +81,8 @@ FPS = 30
 CANVAS_DIM = 1200         # レンダリング解像度(正方形、px)
 MARGIN = 1.15             # skeleton boundsの余白倍率
 MAKE_ALPHA_MOV = True     # 背景透過版(*_alpha.mov, PNGコーデック)も書き出す
+SHOW_BROWSER_LOGS = False  # Trueにするとブラウザ側のconsole.log(スロット一覧など)も全部表示する。
+                            # Falseでも警告/エラーは常に表示される。デバッグ時だけTrueにするとよい。
 
 
 def get_free_port() -> int:
@@ -340,7 +342,9 @@ window.renderFrame = function(animName, time, bgR, bgG, bgB) {
 // 指定範囲のフレームをまとめて描画し、配列でまとめて返す。
 // 中間キャプチャはPNG(可逆)にしている(JPEGだと圧縮ノイズでフレームごとに
 // 低アルファ判定がちらつき、透過動画が点滅する不具合があったため)。
-window.renderFrameBatch = function(animName, startFrame, count, fps) {
+// needAlphaがfalseの場合は白背景の描画を丸ごとスキップする(透過movが不要な時の高速化。
+// この場合は黒背景の描画結果をそのまま不透明として使う)。
+window.renderFrameBatch = function(animName, startFrame, count, fps, needAlpha) {
   const anim = animations[animName];
   const blackUrls = [];
   const whiteUrls = [];
@@ -358,12 +362,14 @@ window.renderFrameBatch = function(animName, startFrame, count, fps) {
     renderer.end();
     blackUrls.push(canvas.toDataURL("image/png"));
 
-    gl.clearColor(1, 1, 1, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    renderer.begin();
-    renderer.drawSkeleton(skeleton, false);
-    renderer.end();
-    whiteUrls.push(canvas.toDataURL("image/png"));
+    if (needAlpha) {
+      gl.clearColor(1, 1, 1, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      renderer.begin();
+      renderer.drawSkeleton(skeleton, false);
+      renderer.end();
+      whiteUrls.push(canvas.toDataURL("image/png"));
+    }
   }
   return { black: blackUrls, white: whiteUrls };
 };
@@ -450,6 +456,14 @@ def compose_alpha_from_black_white(black_arr: np.ndarray, white_arr: np.ndarray)
     return Image.fromarray(rgba, mode="RGBA")
 
 
+def opaque_rgba_from_black(black_arr: np.ndarray) -> Image.Image:
+    """透過が不要な場合(MAKE_ALPHA_MOV=False)用: 白背景描画を省略し、
+    黒背景の描画結果をそのままアルファ255の不透明画像として使う。"""
+    alpha = np.full(black_arr.shape[:2], 255.0, dtype=np.float32)
+    rgba = np.dstack([black_arr, alpha]).astype(np.uint8)
+    return Image.fromarray(rgba, mode="RGBA")
+
+
 def cleanup_extracted_assets(out_dir: Path):
     """レンダリングに使った抽出済みの.skel/.atlas/テクスチャpngを削除する(mp4/mov化が済めば不要なため)。
     ffmpeg変換に失敗して残った連番pngフォルダ(_tmp_frames_*)はフォールバックとしてそのまま残す。"""
@@ -472,8 +486,9 @@ def encode_outputs(rgba_pattern: str, out_dir: Path, name: str, canvas_dim: int)
 
     透過は当初VP9(webm)で試したが、VLC/Discord/YMM4など多くのプレイヤーで
     アルファチャンネルが正しくデコードされないことが確認されたため、より確実な
-    PNGコーデック入りの.mov(可逆・透過対応)に変更した。ファイルサイズは大きくなるが
-    再生側の対応状況に左右されにくい。
+    PNGコーデック入りの.movに変更したが、PNGは1フレームごとに丸ごと展開が必要で
+    再生ソフト側の負荷が高く、コマ落ち/ちらつきの原因になることが分かったため、
+    ちゃんとした動画圧縮でアルファにも対応する ProRes 4444 に変更した。
     mp4側は色ズレを避けるため、素直な yuv420p + シンプルな設定にしてある
     (yuv444p+フルレンジ指定を試したが、逆に一部の再生環境で色が変わってしまったため元に戻した)。
 
@@ -486,6 +501,7 @@ def encode_outputs(rgba_pattern: str, out_dir: Path, name: str, canvas_dim: int)
         "-f", "lavfi", "-i", f"color=black:s={canvas_dim}x{canvas_dim}:r={FPS}",
         "-framerate", str(FPS), "-i", rgba_pattern,
         "-filter_complex", "[0:v][1:v]overlay=shortest=1:format=auto,format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "-crf", "18", "-preset", "medium",
         "-movflags", "+faststart",
         str(mp4_path)
     ], check=False, capture_output=True)
@@ -500,7 +516,7 @@ def encode_outputs(rgba_pattern: str, out_dir: Path, name: str, canvas_dim: int)
         r2 = subprocess.run([
             "ffmpeg", "-y", "-framerate", str(FPS),
             "-i", rgba_pattern,
-            "-c:v", "png",
+            "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le",
             str(mov_path)
         ], check=False, capture_output=True)
         mov_ok = mov_path.exists() and mov_path.stat().st_size > 1024 and r2.returncode == 0
@@ -552,18 +568,28 @@ def render_character(page, char_dir_name, skel_name, atlas_name):
 
         BATCH_SIZE = 20  # フレームをまとめてブラウザに送る単位(往復回数を減らして高速化)
         idx = 0
+        t_start = time.time()
         for start in range(0, n_frames, BATCH_SIZE):
             count = min(BATCH_SIZE, n_frames - start)
             result = page.evaluate(
-                "([a, s, c, fps]) => window.renderFrameBatch(a, s, c, fps)",
-                [anim, start, count, FPS]
+                "([a, s, c, fps, na]) => window.renderFrameBatch(a, s, c, fps, na)",
+                [anim, start, count, FPS, MAKE_ALPHA_MOV]
             )
             for k in range(count):
                 black_arr = decode_frame_rgb(result["black"][k])
-                white_arr = decode_frame_rgb(result["white"][k])
-                rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
+                if MAKE_ALPHA_MOV:
+                    white_arr = decode_frame_rgb(result["white"][k])
+                    rgba_img = compose_alpha_from_black_white(black_arr, white_arr)
+                else:
+                    rgba_img = opaque_rgba_from_black(black_arr)
                 rgba_img.save(tmp_frame_dir / f"frame_{idx:04d}.png")
                 idx += 1
+
+            elapsed = time.time() - t_start
+            pct = idx / n_frames * 100
+            eta = (elapsed / idx) * (n_frames - idx) if idx > 0 else 0
+            print(f"    [進捗] {char_dir_name} / {anim} : {idx}/{n_frames}フレーム "
+                  f"({pct:.0f}%) 経過{elapsed:.0f}秒 残り約{eta:.0f}秒", flush=True)
 
         if not shutil.which("ffmpeg"):
             print(f"[警告] {char_dir_name} / {anim} : ffmpegが見つからないので連番pngのまま残す -> {tmp_frame_dir}")
@@ -605,7 +631,11 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page(viewport={"width": CANVAS_DIM, "height": CANVAS_DIM})
-            page.on("console", lambda msg: print(f"    [ブラウザconsole] {msg.type}: {msg.text}"))
+            page.on("console", lambda msg: (
+                print(f"    [ブラウザconsole] {msg.type}: {msg.text}")
+                if SHOW_BROWSER_LOGS or msg.type in ("warning", "error")
+                else None
+            ))
             page.on("pageerror", lambda exc: print(f"    [ブラウザpageerror] {exc}"))
             for char_dir_name, skel_name, atlas_name, manifest_key in entries:
                 try:
