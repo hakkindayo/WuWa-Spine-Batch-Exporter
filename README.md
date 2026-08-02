@@ -1,3 +1,8 @@
+# About Image Quality When Zooming
+* You can improve the image quality by increasing the `CANVAS_DIM` value.
+  > **Note:** This will also increase the processing time before the output is generated.
+As a test, a separate folder will be created, and the modified output/code will be placed there.
+
 # Known Issues (Confirmed)
 **1. Processing multiple items at once may become very slow or appear to stop progressing.**
 Running the extraction again may resolve the issue. In some cases, the process is still running in the background, but it may take a long time to complete.
@@ -6,10 +11,13 @@ Running the extraction again may resolve the issue. In some cases, the process i
 **Videos with heavy visual effects may flicker significantly when exported as `.mov`. (`.mp4` output does not have this issue.)**
 > **Note:** This appears to be an issue with video players such as VLC rather than the exporter itself.
 
-
 # Not a Bug
-The slow processing speed is a known limitation and is not considered a bug.
-If I find a way to improve the performance in the future, I'll update the code accordingly.
+Slow processing is currently unavoidable. If I find a way to improve the processing speed in the future, I'll update the code accordingly.
+
+# ズームした際の画質の粗さについて
+・`CANVAS_DIM`を変更することで画質は良くなります！
+> ※ですが出力されるまで時間が更に掛かるようになりました
+これはテストとしてフォルダーを作成しそこにコードが追加されます
 
 # バグが起きるもの一覧(確認したもので)
 **1.一気にやると処理が遅くなって進行しなくなる可能性があります！**
